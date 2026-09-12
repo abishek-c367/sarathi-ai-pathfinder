@@ -417,7 +417,7 @@ print(fib(50))  # instant instead of forever`,
               title: "Window movement",
               mermaid: `flowchart LR
   S[start] -->|jump past duplicate| S2[start']
-  I[i moves right每 step] --> B[best = max window]`,
+  I[i moves right one step] --> B[best = max window]`,
             },
             quiz: [
               {
