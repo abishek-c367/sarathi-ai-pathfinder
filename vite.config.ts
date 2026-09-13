@@ -12,4 +12,9 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  vite: {
+    preview: {
+      allowedHosts: ["sarathi-ai-pathfinder.onrender.com"],
+    },
+  },
 });
