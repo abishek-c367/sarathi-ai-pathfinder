@@ -17,7 +17,7 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 // and only disable nitro outside of it — this keeps the Lovable-hosted
 // Cloudflare deploy working while fixing Render (and any other plain Node host).
 const isLovableSandbox =
-  process.env.LOVABLE_SANDBOX === "1" || !!process.env.DEV_SERVER__PROJECT_PATH;
+  process.env["LOVABLE_SANDBOX"] === "1" || !!process.env["DEV_SERVER__PROJECT_PATH"];
 
 export default defineConfig({
   tanstackStart: {
@@ -25,7 +25,9 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
-  nitro: isLovableSandbox ? undefined : false,
+  // Omit `nitro` entirely inside the Lovable sandbox (default Cloudflare behavior applies);
+  // only set it to `false` outside — exactOptionalPropertyTypes rejects an explicit `undefined`.
+  ...(isLovableSandbox ? {} : { nitro: false as const }),
   vite: {
     preview: {
       allowedHosts: ["sarathi-ai-pathfinder.onrender.com",
@@ -33,3 +35,4 @@ export default defineConfig({
     },
   },
 });
+
