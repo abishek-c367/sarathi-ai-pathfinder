@@ -8,6 +8,7 @@ import {
   finalConceptExtras,
   nextId,
   parseModelMarkdown,
+  retryCheckPrompt,
   simulatedAsk,
   simulatedConceptTeach,
   simulatedJudge,
@@ -162,11 +163,16 @@ async function groqJudge(
 ): Promise<{ understood: boolean; feedback: string }> {
   const { lesson, conceptIndex } = body;
   const concept = lesson.concepts[conceptIndex] ?? lesson.title;
+  const hinted = !!body.hinted;
 
   const system = [
-    "You are grading a student's short answer to a comprehension check for ONE concept.",
+    "You are grading a student's short answer to a comprehension check for ONE concept, and writing the feedback they'll actually read.",
     "Judge generously but honestly: partial, imprecise phrasing that shows real understanding still counts as understood.",
-    'Respond with ONLY compact JSON, no prose, no markdown fences: {"understood": true|false, "feedback": "<=2 short sentences, speak directly to the student"}.',
+    "If the student's answer is empty, says they don't know, or is not a real attempt, mark understood=false — do NOT ask them to guess again.",
+    hinted
+      ? "This is their SECOND attempt and they will move on regardless of this result. If understood=false, `feedback` must plainly state the correct idea in full (2-3 sentences) so they leave with a real answer, not just a verdict."
+      : 'This is their FIRST attempt. If understood=false, `feedback` must include a real, concrete explanation of the concept (not just "not quite") so a retry has something to work from — 2-3 sentences.',
+    'Respond with ONLY compact JSON, no prose, no markdown fences: {"understood": true|false, "feedback": "speak directly to the student"}.',
   ].join(" ");
 
   const user = [
@@ -228,7 +234,7 @@ export const Route = createFileRoute("/api/tutor")({
                 id: nextId(),
                 kind: "checkin",
                 concept,
-                prompt: fallbackCheckPrompt(concept, body.lesson.objectives),
+                prompt: retryCheckPrompt(concept),
               });
             }
             judgement = { correct: understood, advance };
@@ -240,20 +246,20 @@ export const Route = createFileRoute("/api/tutor")({
           } else if (body.mode === "ask") {
             blocks = simulatedAsk(body, teaching);
           } else {
-            const { understood, feedback } = simulatedJudge(concept, body.answerText ?? "");
+            const { understood, feedback } = simulatedJudge(
+              body.lesson,
+              concept,
+              body.answerText ?? "",
+              !!body.hinted,
+            );
             const advance = understood || !!body.hinted;
             blocks = [{ id: nextId(), kind: "text", markdown: feedback }];
             if (!advance) {
               blocks.push({
                 id: nextId(),
-                kind: "text",
-                markdown: `Hint: think about ${lessonHint(body)}`,
-              });
-              blocks.push({
-                id: nextId(),
                 kind: "checkin",
                 concept,
-                prompt: fallbackCheckPrompt(concept, body.lesson.objectives),
+                prompt: retryCheckPrompt(concept),
               });
             }
             judgement = { correct: understood, advance };
@@ -288,9 +294,3 @@ export const Route = createFileRoute("/api/tutor")({
     },
   },
 });
-
-function lessonHint(body: TutorRequest): string {
-  const objective = body.lesson.objectives[0];
-  return objective ? objective.toLowerCase() : body.lesson.intuition;
-}
-
