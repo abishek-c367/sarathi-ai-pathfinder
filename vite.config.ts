@@ -28,7 +28,8 @@ export default defineConfig({
   nitro: isLovableSandbox ? undefined : false,
   vite: {
     preview: {
-      allowedHosts: ["sarathi-ai-pathfinder.onrender.com"],
+      allowedHosts: ["sarathi-ai-pathfinder.onrender.com",
+                    "sarathi-ai-pathfinder-1.onrender.com"],
     },
   },
 });
