@@ -20,8 +20,13 @@ import {
 } from "@/lib/tutor-blocks";
 import type { TeachingStyle } from "@/lib/course-types";
 
+// Override with a GROQ_MODEL env var if you want a different model; this is
+// the current recommended Groq-hosted default. GPT-OSS models are reasoning
+// models, so `reasoning_format`/`reasoning_effort` below only apply to them.
+const DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b";
+
 type StreamEvent =
-  | { type: "meta"; engine: string }
+  | { type: "meta"; engine: string; detail?: string }
   | { type: "block"; block: TutorBlock }
   | { type: "judgement"; correct: boolean; advance: boolean }
   | { type: "done"; done: boolean };
@@ -48,28 +53,58 @@ function masteryNote(mastery: TutorRequest["mastery"]): string {
   return "The student's understanding so far looks about average for this point in the lesson — keep a steady, clear pace.";
 }
 
+/**
+ * Some GPT-OSS deployments have, under load, leaked their internal reasoning
+ * trace into `message.content` even with reasoning_format=hidden requested
+ * (a known upstream quirk). Strip anything that looks like a leaked trace
+ * defensively, on top of requesting hidden reasoning in the first place.
+ */
+function stripReasoningArtifacts(content: string): string {
+  return content
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^\s*(analysis|reasoning|thinking)\s*:\s*/i, "")
+    .trim();
+}
+
 async function callGroq(
   apiKey: string,
   system: string,
   user: string,
-  opts?: { json?: boolean },
+  opts?: { json?: boolean; reasoningEffort?: "low" | "medium" | "high" },
 ): Promise<string> {
+  const model = process.env["GROQ_MODEL"] || DEFAULT_GROQ_MODEL;
+  const isReasoningModel = /gpt-oss|qwen3/i.test(model);
+
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
+      model,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
       temperature: opts?.json ? 0.2 : 0.4,
       ...(opts?.json ? { response_format: { type: "json_object" } } : {}),
+      // GPT-OSS (and Qwen3) are reasoning models on Groq: without these, the
+      // model's chain-of-thought can end up mixed into `message.content`
+      // instead of the final answer, which is the most common cause of this
+      // route silently looking "broken" even with a valid key.
+      ...(isReasoningModel
+        ? { reasoning_effort: opts?.reasoningEffort ?? "low", reasoning_format: "hidden" }
+        : {}),
     }),
   });
-  if (!res.ok) throw new Error(`Groq error ${res.status}`);
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Groq ${model} request failed (${res.status}): ${detail.slice(0, 400)}`);
+  }
+
   const payload = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return payload.choices?.[0]?.message?.content ?? "";
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content) throw new Error(`Groq ${model} returned no content`);
+  return stripReasoningArtifacts(content);
 }
 
 /** Teach exactly one concept, ending (for non-final concepts) with a `CHECK:` line. */
@@ -102,7 +137,7 @@ async function groqTeachConcept(
     `Recent conversation:\n${historyText(body.history)}`,
   ].join("\n");
 
-  const raw = await callGroq(apiKey, system, user);
+  const raw = await callGroq(apiKey, system, user, { reasoningEffort: "low" });
   const { explanation, checkPrompt } = splitConceptResponse(raw);
   const blocks = parseModelMarkdown(capWords(explanation, budget));
 
@@ -152,7 +187,7 @@ async function groqAsk(
     `Student question: ${body.question ?? ""}`,
   ].join("\n");
 
-  const raw = await callGroq(apiKey, system, user);
+  const raw = await callGroq(apiKey, system, user, { reasoningEffort: "low" });
   const blocks = parseModelMarkdown(capWords(raw, budget));
   return blocks.length > 0 ? blocks : [{ id: nextId(), kind: "text", markdown: raw }];
 }
@@ -181,12 +216,12 @@ async function groqJudge(
     `Student's answer: ${body.answerText ?? ""}`,
   ].join("\n");
 
-  const raw = await callGroq(apiKey, system, user, { json: true });
+  const raw = await callGroq(apiKey, system, user, { json: true, reasoningEffort: "medium" });
   const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("No JSON in judge response");
+  if (!match) throw new Error(`No JSON in judge response: ${raw.slice(0, 200)}`);
   const parsed = JSON.parse(match[0]) as { understood?: unknown; feedback?: unknown };
   if (typeof parsed.understood !== "boolean" || typeof parsed.feedback !== "string") {
-    throw new Error("Malformed judge response");
+    throw new Error(`Malformed judge response: ${raw.slice(0, 200)}`);
   }
   return { understood: parsed.understood, feedback: parsed.feedback };
 }
@@ -216,31 +251,46 @@ export const Route = createFileRoute("/api/tutor")({
         const concept = body.lesson.concepts[body.conceptIndex] ?? body.lesson.title;
 
         let engine = "simulated";
+        let engineDetail: string | undefined;
         let blocks: TutorBlock[] = [];
         let judgement: { correct: boolean; advance: boolean } | null = null;
 
-        try {
-          if (!groqKey) throw new Error("no key configured");
-          if (body.mode === "concept") {
-            blocks = (await groqTeachConcept(body, teaching, groqKey)).blocks;
-          } else if (body.mode === "ask") {
-            blocks = await groqAsk(body, teaching, groqKey);
-          } else {
-            const { understood, feedback } = await groqJudge(body, groqKey);
-            const advance = understood || !!body.hinted;
-            blocks = [{ id: nextId(), kind: "text", markdown: feedback }];
-            if (!advance) {
-              blocks.push({
-                id: nextId(),
-                kind: "checkin",
-                concept,
-                prompt: retryCheckPrompt(concept),
-              });
+        if (!groqKey) {
+          engineDetail = "GROQ_API_KEY is not set on this server";
+        } else {
+          try {
+            if (body.mode === "concept") {
+              blocks = (await groqTeachConcept(body, teaching, groqKey)).blocks;
+            } else if (body.mode === "ask") {
+              blocks = await groqAsk(body, teaching, groqKey);
+            } else {
+              const { understood, feedback } = await groqJudge(body, groqKey);
+              const advance = understood || !!body.hinted;
+              blocks = [{ id: nextId(), kind: "text", markdown: feedback }];
+              if (!advance) {
+                blocks.push({
+                  id: nextId(),
+                  kind: "checkin",
+                  concept,
+                  prompt: retryCheckPrompt(concept),
+                });
+              }
+              judgement = { correct: understood, advance };
             }
-            judgement = { correct: understood, advance };
+            engine = "groq";
+          } catch (e) {
+            // This used to be swallowed silently — log it so it's visible in
+            // server logs (e.g. Render's Logs tab), and surface a short
+            // reason to the client too, instead of failing invisibly.
+            const message = e instanceof Error ? e.message : String(e);
+            console.error("[api/tutor] Groq call failed, using built-in tutor instead:", message);
+            engineDetail = message;
+            blocks = [];
+            judgement = null;
           }
-          engine = "groq";
-        } catch {
+        }
+
+        if (engine !== "groq") {
           if (body.mode === "concept") {
             blocks = simulatedConceptTeach(body, teaching);
           } else if (body.mode === "ask") {
@@ -271,7 +321,15 @@ export const Route = createFileRoute("/api/tutor")({
         const stream = new ReadableStream<Uint8Array>({
           async start(controller) {
             const encoder = new TextEncoder();
-            controller.enqueue(encoder.encode(encodeEvent({ type: "meta", engine })));
+            controller.enqueue(
+              encoder.encode(
+                encodeEvent({
+                  type: "meta",
+                  engine,
+                  ...(engineDetail ? { detail: engineDetail } : {}),
+                }),
+              ),
+            );
             for (const block of blocks) {
               await new Promise((r) => setTimeout(r, 220));
               controller.enqueue(encoder.encode(encodeEvent({ type: "block", block })));
