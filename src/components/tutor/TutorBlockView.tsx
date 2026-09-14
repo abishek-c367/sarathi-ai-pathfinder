@@ -2,6 +2,7 @@ import { ClientOnly } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
 import Markdown from "react-markdown";
 
+import { CheckinCard } from "@/components/tutor/CheckinCard";
 import { CodeBlock } from "@/components/tutor/CodeBlock";
 import { QuizCard } from "@/components/tutor/QuizCard";
 import type { TutorBlock } from "@/lib/tutor-blocks";
@@ -11,9 +12,15 @@ const Mermaid = lazy(() => import("@/components/tutor/Mermaid"));
 export function TutorBlockView({
   block,
   onAnswer,
+  onCheckin,
+  checkinResult,
+  checkinBusy,
 }: {
   block: TutorBlock;
-  onAnswer?: (questionId: string, correct: boolean) => void;
+  onAnswer?: ((questionId: string, correct: boolean) => void) | undefined;
+  onCheckin?: ((text: string) => void) | undefined;
+  checkinResult?: { correct: boolean } | null | undefined;
+  checkinBusy?: boolean | undefined;
 }) {
   if (block.kind === "text") {
     return (
@@ -38,6 +45,17 @@ export function TutorBlockView({
           <Mermaid chart={block.chart} title={block.title} />
         </Suspense>
       </ClientOnly>
+    );
+  }
+
+  if (block.kind === "checkin") {
+    return (
+      <CheckinCard
+        block={block}
+        onSubmit={(text) => onCheckin?.(text)}
+        result={checkinResult}
+        busy={checkinBusy}
+      />
     );
   }
 
