@@ -128,6 +128,29 @@ export function fallbackCheckPrompt(concept: string, objectives: string[]): stri
     : `In your own words, what is "${concept}" and why does it matter here?`;
 }
 
+/** A gentler, differently-worded retry prompt — avoids repeating the first prompt verbatim. */
+export function retryCheckPrompt(concept: string): string {
+  return `In one sentence — what's the core idea behind "${concept}"?`;
+}
+
+/** True for empty, very short, or explicit "I don't know" style non-answers. */
+export function isNonAnswer(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (t.length < 4) return true;
+  return /\b(i\s*)?(do\s*n['o]?t|dont)\s*know\b|no\s*idea|not\s*sure|^idk\b/.test(t);
+}
+
+function cleanObjective(objective: string): string {
+  return objective.replace(/^[\s#*•-]*\d+[.):]?\s*/, "").trim();
+}
+
+/** A real, substantive explanation of a concept — used to give retries actual content, not just a nudge. */
+export function explainConcept(lesson: Lesson, concept: string): string {
+  const objective = lesson.objectives[0];
+  const goal = objective ? ` The goal here: ${cleanObjective(objective).toLowerCase()}.` : "";
+  return `For **${concept}**: ${lesson.intuition}${goal}`;
+}
+
 /** Splits a concept-teaching model response into its explanation and an optional trailing `CHECK:` line. */
 export function splitConceptResponse(markdown: string): {
   explanation: string;
@@ -271,25 +294,34 @@ export function simulatedAsk(req: TutorRequest, teaching: TeachingStyle): TutorB
 }
 
 export function simulatedJudge(
+  lesson: Lesson,
   concept: string,
   answerText: string,
+  hinted: boolean,
 ): { understood: boolean; feedback: string } {
-  const text = answerText.trim().toLowerCase();
-  if (text.length < 6) {
+  const text = answerText.trim();
+
+  if (isNonAnswer(text)) {
     return {
       understood: false,
-      feedback: "That's a bit short for me to tell — try a full sentence.",
+      feedback: hinted
+        ? `That's alright. Here's the idea plainly: ${explainConcept(lesson, concept)} We'll move on — ask anytime if you want this again.`
+        : `No worries — here's a fuller nudge: ${explainConcept(lesson, concept)}`,
     };
   }
+
   const keywords = concept
     .toLowerCase()
     .split(/[\s/-]+/)
     .filter((w) => w.length > 3);
-  const hit = keywords.length === 0 || keywords.some((k) => text.includes(k));
-  return hit
-    ? { understood: true, feedback: "That lines up with the idea — nice." }
-    : {
-        understood: false,
-        feedback: `Not quite — try tying your answer directly back to "${concept}".`,
-      };
+  const hit = keywords.length === 0 || keywords.some((k) => text.toLowerCase().includes(k));
+  if (hit) {
+    return { understood: true, feedback: "That lines up with the idea — nice." };
+  }
+  return {
+    understood: false,
+    feedback: hinted
+      ? `Close, but let's make sure this one's clear: ${explainConcept(lesson, concept)} Moving on.`
+      : `Not quite yet. ${explainConcept(lesson, concept)}`,
+  };
 }
