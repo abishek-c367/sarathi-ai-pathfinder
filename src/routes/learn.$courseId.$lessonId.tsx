@@ -74,6 +74,7 @@ function TutorWorkspace() {
     turns,
     streaming,
     engine,
+    engineDetail,
     conceptIndex,
     lessonDone,
     error,
@@ -197,7 +198,7 @@ function TutorWorkspace() {
               {pace.label}
             </Badge>
           )}
-          <Badge variant="outline" className="gap-1">
+          <Badge variant="outline" className="gap-1" title={engineDetail}>
             <Cpu className="size-3" />
             {engine === "groq" ? "Live AI tutor" : "Built-in tutor"}
           </Badge>
