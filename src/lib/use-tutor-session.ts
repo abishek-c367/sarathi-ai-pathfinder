@@ -13,7 +13,7 @@ import {
 } from "./tutor-blocks";
 
 type StreamEvent =
-  | { type: "meta"; engine: string }
+  | { type: "meta"; engine: string; detail?: string }
   | { type: "block"; block: TutorBlock }
   | { type: "judgement"; correct: boolean; advance: boolean }
   | { type: "done"; done: boolean };
@@ -50,6 +50,7 @@ export function useTutorSession() {
   const [turns, setTurns] = useState<TutorTurn[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [engine, setEngine] = useState<string>("simulated");
+  const [engineDetail, setEngineDetail] = useState<string | undefined>(undefined);
   const [conceptIndex, setConceptIndex] = useState(0);
   const [lessonDone, setLessonDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,7 +137,10 @@ export function useTutorSession() {
             } catch {
               continue;
             }
-            if (event.type === "meta") setEngine(event.engine);
+            if (event.type === "meta") {
+              setEngine(event.engine);
+              setEngineDetail(event.detail);
+            }
             if (event.type === "block") {
               if (event.block.kind === "checkin") lastCheckinId = event.block.id;
               setTurns((t) =>
@@ -243,6 +247,7 @@ export function useTutorSession() {
     turns,
     streaming,
     engine,
+    engineDetail,
     conceptIndex,
     lessonDone,
     error,
