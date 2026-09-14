@@ -5,9 +5,12 @@ import {
   Check,
   CircleDot,
   Cpu,
+  Gauge,
   Loader2,
+  Rabbit,
   Send,
   Sparkles,
+  Turtle,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -20,8 +23,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useAppStore } from "@/lib/app-store";
 import { flattenLessons } from "@/lib/course-types";
-import { totalBeats } from "@/lib/tutor-blocks";
-import { useTutorStream } from "@/lib/use-tutor-stream";
+import { useTutorSession } from "@/lib/use-tutor-session";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/learn/$courseId/$lessonId")({
@@ -31,17 +33,23 @@ export const Route = createFileRoute("/learn/$courseId/$lessonId")({
       {
         name: "description",
         content:
-          "Learn interactively: streamed explanations, diagrams, code walkthroughs and checkpoint quizzes.",
+          "Learn one concept at a time: the tutor explains, checks your understanding, and adapts its pace to you.",
       },
       { property: "og:title", content: "Tutor workspace — Sarathi AI Tutor" },
       {
         property: "og:description",
-        content: "Streamed explanations, diagrams and checkpoint quizzes with your AI tutor.",
+        content: "A step-by-step AI tutor that adapts its pace and depth to how you're doing.",
       },
     ],
   }),
   component: TutorWorkspace,
 });
+
+const PACE_LABEL: Record<string, { label: string; icon: typeof Gauge }> = {
+  brisk: { label: "Pace: quick", icon: Rabbit },
+  slow: { label: "Pace: careful", icon: Turtle },
+  balanced: { label: "Pace: steady", icon: Gauge },
+};
 
 function TutorWorkspace() {
   const { courseId, lessonId } = Route.useParams();
@@ -62,10 +70,25 @@ function TutorWorkspace() {
   const index = lessons.findIndex((l) => l.lessonId === lessonId);
   const current = index >= 0 ? lessons[index] : undefined;
 
-  const { turns, streaming, engine, beat, lessonDone, error, send, reset } = useTutorStream();
+  const {
+    turns,
+    streaming,
+    engine,
+    conceptIndex,
+    lessonDone,
+    error,
+    mastery,
+    checkinResults,
+    activeCheckinId,
+    teachConcept,
+    askQuestion,
+    submitCheckin,
+    reset,
+  } = useTutorSession();
   const [question, setQuestion] = useState("");
   const [answered, setAnswered] = useState<Record<string, boolean>>({});
   const streamEnd = useRef<HTMLDivElement>(null);
+  const started = useRef(false);
 
   const enrollment = course ? enrollmentFor(course.id) : undefined;
 
@@ -75,12 +98,31 @@ function TutorWorkspace() {
     touchLesson(course.id, current.lessonId);
     reset();
     setAnswered({});
+    started.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId, lessonId, hydrated]);
 
   useEffect(() => {
     streamEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [turns]);
+
+  // Every time the session advances to a new concept (after a correct
+  // check-in), teach that concept automatically — this is what makes the
+  // lesson feel like a guided conversation rather than a button to mash.
+  useEffect(() => {
+    if (!started.current || !course || !current) return;
+    if (lessonDone) return;
+    teachConcept(
+      {
+        courseTitle: course.title,
+        moduleTitle: current.moduleTitle,
+        teaching: course.teaching,
+        lesson: current.lesson,
+      },
+      conceptIndex,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conceptIndex]);
 
   if (!course || !current) {
     if (!hydrated) return <div className="p-10 text-sm text-muted-foreground">Loading lesson…</div>;
@@ -107,11 +149,18 @@ function TutorWorkspace() {
 
   const requiresQuiz = course.teaching.enforceQuizzes;
   const quizPassed = answeredList.some(Boolean);
+  const pace = PACE_LABEL[mastery.pace] ?? PACE_LABEL["balanced"]!;
+  const PaceIcon = pace.icon;
 
   const onAnswer = (questionId: string, correct: boolean) => {
     setAnswered((a) => ({ ...a, [questionId]: correct }));
     recordAttempt(course.id, questionId, correct);
     toast[correct ? "success" : "error"](correct ? "Correct — nice." : "Review the explanation.");
+  };
+
+  const startLesson = () => {
+    started.current = true;
+    teachConcept(baseRequest, 0);
   };
 
   const finish = () => {
@@ -142,9 +191,12 @@ function TutorWorkspace() {
         <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">{lesson.title}</h1>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Badge variant="secondary">{lesson.minutes} min</Badge>
-          <Badge variant="outline" className="capitalize">
-            {course.teaching.tone} · {course.teaching.pacing}
-          </Badge>
+          {turns.length > 0 && (
+            <Badge variant="outline" className="gap-1">
+              <PaceIcon className="size-3" />
+              {pace.label}
+            </Badge>
+          )}
           <Badge variant="outline" className="gap-1">
             <Cpu className="size-3" />
             {engine === "groq" ? "Live AI tutor" : "Built-in tutor"}
@@ -159,7 +211,11 @@ function TutorWorkspace() {
               <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                 {lesson.intuition}
               </p>
-              <Button className="mt-4" onClick={() => void send({ mode: "continue", ...baseRequest })}>
+              <p className="mx-auto mt-2 max-w-md text-xs text-muted-foreground">
+                We'll go one concept at a time — {lesson.concepts.length} in this lesson — and the
+                pace adjusts to how you're doing.
+              </p>
+              <Button className="mt-4" onClick={startLesson}>
                 Start lesson
               </Button>
             </div>
@@ -176,7 +232,7 @@ function TutorWorkspace() {
               )}
             >
               <p className="mb-3 text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
-                {turn.author === "student" ? "You asked" : "Sarathi"}
+                {turn.author === "student" ? "You" : "Sarathi"}
               </p>
               {turn.pending ? (
                 <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -185,7 +241,22 @@ function TutorWorkspace() {
               ) : (
                 <div className="space-y-4">
                   {turn.blocks.map((block) => (
-                    <TutorBlockView key={block.id} block={block} onAnswer={onAnswer} />
+                    <TutorBlockView
+                      key={block.id}
+                      block={block}
+                      onAnswer={onAnswer}
+                      onCheckin={
+                        block.kind === "checkin"
+                          ? (text) => submitCheckin(baseRequest, text)
+                          : undefined
+                      }
+                      checkinResult={
+                        block.kind === "checkin" ? checkinResults[block.id] : undefined
+                      }
+                      checkinBusy={
+                        block.kind === "checkin" && block.id === activeCheckinId ? streaming : false
+                      }
+                    />
                   ))}
                 </div>
               )}
@@ -201,38 +272,39 @@ function TutorWorkspace() {
         )}
 
         <div className="sticky bottom-0 mt-6 space-y-3 bg-background/90 py-4 backdrop-blur">
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={() => void send({ mode: "continue", ...baseRequest })}
-              disabled={streaming || (lessonDone && turns.length > 0)}
-            >
-              {streaming ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-              {turns.length === 0 ? "Start lesson" : "Continue lesson"}
-            </Button>
-            <Button variant="outline" onClick={finish} disabled={streaming}>
+          <div className="flex flex-wrap items-center gap-2">
+            {turns.length > 0 && (
+              <span className="text-xs text-muted-foreground">
+                Concept {Math.min(conceptIndex + 1, lesson.concepts.length)} of{" "}
+                {lesson.concepts.length}
+                {quizScore !== null && ` · checkpoint score ${quizScore}%`}
+              </span>
+            )}
+            <Button variant="outline" onClick={finish} disabled={streaming} className="ml-auto">
               <Check className="mr-2 size-4" /> Mark lesson complete
             </Button>
-            <span className="self-center text-xs text-muted-foreground">
-              Beat {Math.min(beat + 1, totalBeats())} of {totalBeats()}
-              {quizScore !== null && ` · checkpoint score ${quizScore}%`}
-            </span>
           </div>
           <form
             className="flex items-end gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               const q = question.trim();
-              if (!q || streaming) return;
+              if (!q || streaming || turns.length === 0) return;
               setQuestion("");
-              void send({ mode: "ask", question: q, ...baseRequest });
+              askQuestion(baseRequest, q);
             }}
           >
             <Textarea
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              placeholder="Ask Sarathi anything about this lesson…"
+              placeholder={
+                turns.length === 0
+                  ? "Start the lesson to ask Sarathi questions…"
+                  : "Ask Sarathi anything about this lesson…"
+              }
               rows={2}
               className="resize-none"
+              disabled={turns.length === 0}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -240,7 +312,11 @@ function TutorWorkspace() {
                 }
               }}
             />
-            <Button type="submit" size="icon" disabled={streaming || !question.trim()}>
+            <Button
+              type="submit"
+              size="icon"
+              disabled={streaming || !question.trim() || turns.length === 0}
+            >
               <Send className="size-4" />
             </Button>
           </form>
@@ -249,19 +325,30 @@ function TutorWorkspace() {
 
       <aside className="space-y-6 lg:sticky lg:top-24 lg:self-start">
         <div className="rounded-2xl border border-border bg-card p-5">
-          <h2 className="text-sm font-semibold">Lesson objectives</h2>
+          <h2 className="text-sm font-semibold">Concepts in this lesson</h2>
           <ul className="mt-3 space-y-2 text-sm">
-            {lesson.objectives.map((objective, i) => {
-              const reached = beat > i || lessonDone;
+            {lesson.concepts.map((concept, i) => {
+              const reached = conceptIndex > i || lessonDone;
+              const active = conceptIndex === i && !lessonDone && turns.length > 0;
               return (
-                <li key={objective} className="flex gap-2">
+                <li key={concept} className="flex gap-2">
                   {reached ? (
                     <Check className="mt-0.5 size-4 shrink-0 text-chart-2" />
                   ) : (
-                    <CircleDot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                    <CircleDot
+                      className={cn(
+                        "mt-0.5 size-4 shrink-0",
+                        active ? "text-primary" : "text-muted-foreground",
+                      )}
+                    />
                   )}
-                  <span className={reached ? "text-foreground" : "text-muted-foreground"}>
-                    {objective}
+                  <span
+                    className={cn(
+                      reached || active ? "text-foreground" : "text-muted-foreground",
+                      active && "font-medium",
+                    )}
+                  >
+                    {concept}
                   </span>
                 </li>
               );
