@@ -13,7 +13,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as CatalogRouteImport } from './routes/catalog'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminIngestRouteImport } from './routes/admin.ingest'
-import { Route as ApiTutorRouteImport } from './routes/api/tutor'
 import { Route as AdminCoursesCourseIdRouteImport } from './routes/admin.courses.$courseId'
 import { Route as LearnCourseIdLessonIdRouteImport } from './routes/learn.$courseId.$lessonId'
 
@@ -37,11 +36,6 @@ const AdminIngestRoute = AdminIngestRouteImport.update({
   path: '/admin/ingest',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiTutorRoute = ApiTutorRouteImport.update({
-  id: '/api/tutor',
-  path: '/api/tutor',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AdminCoursesCourseIdRoute = AdminCoursesCourseIdRouteImport.update({
   id: '/admin/courses/$courseId',
   path: '/admin/courses/$courseId',
@@ -57,7 +51,6 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/catalog': typeof CatalogRoute
   '/admin/ingest': typeof AdminIngestRoute
-  '/api/tutor': typeof ApiTutorRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/courses/$courseId': typeof AdminCoursesCourseIdRoute
   '/learn/$courseId/$lessonId': typeof LearnCourseIdLessonIdRoute
@@ -66,7 +59,6 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/catalog': typeof CatalogRoute
   '/admin/ingest': typeof AdminIngestRoute
-  '/api/tutor': typeof ApiTutorRoute
   '/admin': typeof AdminIndexRoute
   '/admin/courses/$courseId': typeof AdminCoursesCourseIdRoute
   '/learn/$courseId/$lessonId': typeof LearnCourseIdLessonIdRoute
@@ -76,7 +68,6 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/catalog': typeof CatalogRoute
   '/admin/ingest': typeof AdminIngestRoute
-  '/api/tutor': typeof ApiTutorRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/courses/$courseId': typeof AdminCoursesCourseIdRoute
   '/learn/$courseId/$lessonId': typeof LearnCourseIdLessonIdRoute
@@ -87,7 +78,6 @@ export interface FileRouteTypes {
     | '/'
     | '/catalog'
     | '/admin/ingest'
-    | '/api/tutor'
     | '/admin/'
     | '/admin/courses/$courseId'
     | '/learn/$courseId/$lessonId'
@@ -96,7 +86,6 @@ export interface FileRouteTypes {
     | '/'
     | '/catalog'
     | '/admin/ingest'
-    | '/api/tutor'
     | '/admin'
     | '/admin/courses/$courseId'
     | '/learn/$courseId/$lessonId'
@@ -105,7 +94,6 @@ export interface FileRouteTypes {
     | '/'
     | '/catalog'
     | '/admin/ingest'
-    | '/api/tutor'
     | '/admin/'
     | '/admin/courses/$courseId'
     | '/learn/$courseId/$lessonId'
@@ -115,7 +103,6 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CatalogRoute: typeof CatalogRoute
   AdminIngestRoute: typeof AdminIngestRoute
-  ApiTutorRoute: typeof ApiTutorRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminCoursesCourseIdRoute: typeof AdminCoursesCourseIdRoute
   LearnCourseIdLessonIdRoute: typeof LearnCourseIdLessonIdRoute
@@ -151,13 +138,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIngestRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/tutor': {
-      id: '/api/tutor'
-      path: '/api/tutor'
-      fullPath: '/api/tutor'
-      preLoaderRoute: typeof ApiTutorRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/admin/courses/$courseId': {
       id: '/admin/courses/$courseId'
       path: '/admin/courses/$courseId'
@@ -179,7 +159,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CatalogRoute: CatalogRoute,
   AdminIngestRoute: AdminIngestRoute,
-  ApiTutorRoute: ApiTutorRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminCoursesCourseIdRoute: AdminCoursesCourseIdRoute,
   LearnCourseIdLessonIdRoute: LearnCourseIdLessonIdRoute,
