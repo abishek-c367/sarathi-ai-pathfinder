@@ -6,7 +6,6 @@ import type { TutorIntent, TutorMessage } from "@/services/types";
 import { generate, type LlmMessage } from "./llm.server";
 import {
   addMessage,
-  buildState,
   conceptRecord,
   markLessonComplete,
   setConcept,
@@ -314,6 +313,5 @@ export async function runQuizFeedback(opts: {
     at: Date.now(),
   };
   addMessage(session, message);
-  void buildState;
   return result.text;
 }
